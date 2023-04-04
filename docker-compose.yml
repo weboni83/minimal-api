@@ -1,0 +1,40 @@
+version: "3.7"
+
+services:
+  nginx:
+    depends_on:
+      - api_1
+    #   - api_2
+    #   - api_3
+    build:
+      context: ./nginx
+      dockerfile: nginx.Dockerfile
+    environment:
+      - VIRTUAL_HOST=api.acme.io
+      - VIRTUAL_PORT=80
+      - LETSENCRYPT_HOST=api.acme.io
+      - LETSCRYPT_EMAIL=acme@gmail.com
+    restart: "no"
+
+  api_1:
+    image: ghcr.io/weboni83/minimal-api:latest
+    expose:
+      - "5001"
+    restart: "no"
+
+#   api_2:
+#     image: ghcr.io/weboni83/minimal-api:latest
+#     expose:
+#       - "5001"
+#     restart: "no"
+
+#   api_3:
+#     image: ghcr.io/weboni83/minimal-api:latest
+#     expose:
+#       - "5001"
+#     restart: "no"
+
+networks:
+  default:
+    external:
+      name: nginx-proxy
