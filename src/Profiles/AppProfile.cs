@@ -14,10 +14,6 @@ namespace MinimalAPIsDemo.Profiles
             CreateMap<AlarmDTO, SYS_ALARM>();
             CreateMap<CM_COMMON, CommonDTO>();
             CreateMap<CommonDTO, CM_COMMON>();
-
-            //CreateMap<SYS_ALARM, AlarmDTO>()
-            //    .ForMember(dest => dest.ALARM_TITLE
-            //    , opt => opt.MapFrom(src => src.FORM_NAME));
         }
     }
 }

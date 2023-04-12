@@ -1,12 +1,11 @@
-﻿using Newtonsoft.Json;
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace MinimalAPIsDemo.DTOs
 {
-    public class NotificationDTO
-    {
+    public class NotificationUserDTO
+    { 
         [JsonPropertyName("sender_id")]
-        public string SenderDeviceId { get; set; }
+        public string SenderUserId { get; set; }
         [JsonPropertyName("data")]
         public Dictionary<string, string> Data { get; set; }
     }

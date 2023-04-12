@@ -29,6 +29,8 @@ namespace MinimalAPIsDemo.Entities
         public int AUDITTRAIL_ID { get; set; }
         public string AUDITTRAIL_REMARK { get; set; }
         public string AUDITTRAIL_STATUS { get; set; }
+        [JsonPropertyName("device_token")]
+        public string DEVICE_TOKEN { get; set; }
     }
 
 

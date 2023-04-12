@@ -10,5 +10,7 @@ namespace MinimalAPIsDemo.DTOs
         public string USER_ID { get; set; }
         [JsonPropertyName("user_name")]
         public string USER_NAME { get; set; }
+        [JsonPropertyName("device_token")]
+        public string DEVICE_TOKEN { get; set; }
     }
 }

@@ -2,6 +2,7 @@ using AutoMapper;
 using FirebaseAdmin;
 using FirebaseAdmin.Messaging;
 using Google.Apis.Auth.OAuth2;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using MinimalAPIsDemo.Data;
@@ -31,18 +32,24 @@ builder.Host.UseSerilog((ctx, lc) => lc
         .WriteTo.Console()
 .ReadFrom.Configuration(ctx.Configuration));
 
+// 환경변수 추가.
+builder.Host.ConfigureAppConfiguration((hostingContext, config) =>
+{
+    config.AddEnvironmentVariables();
+});
+
+
 var app = builder.Build();
 
 // By default, the ASP.NET Core framework logs multiple information-level events per request.
 app.UseSerilogRequestLogging();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-
 
 var configuration = new MapperConfiguration(cfg =>
 {
@@ -54,11 +61,14 @@ var defaultApp = FirebaseApp.Create(new AppOptions()
 {
     Credential = GoogleCredential.FromFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "key.json")),
 });
-Console.WriteLine(defaultApp.Name);
 
+app.Logger.LogInformation($"InitFirebaseApp => {defaultApp.Name}");
+
+//Request할 때 고정된 값을 사용한다.
+const string PLANT_CD = "001";
 
 //get the list of parameter
-app.MapGet("/userlist", async (DbContextClass dbContext) =>
+app.MapGet("/users", async (DbContextClass dbContext) =>
 {
     var users = await dbContext.SYS_USER_INFOs.ToListAsync();
 
@@ -73,9 +83,9 @@ app.MapGet("/userlist", async (DbContextClass dbContext) =>
 });
 
 //get user by id
-app.MapGet("/getuserbyid", async (string plant_cd, string user_Id, DbContextClass dbContext) =>
+app.MapGet("/user/{id}", async ([FromRoute] string id, DbContextClass dbContext) =>
 {
-    var user = await dbContext.SYS_USER_INFOs.FindAsync(plant_cd, user_Id);
+    var user = await dbContext.SYS_USER_INFOs.FindAsync(PLANT_CD, id);
     if (user == null)
     {
         return Results.NotFound();
@@ -87,18 +97,20 @@ app.MapGet("/getuserbyid", async (string plant_cd, string user_Id, DbContextClas
 });
 
 //get alarm by by user_id
-app.MapGet("/getalarmbyuserid", async (string plant_cd, string user_Id, DbContextClass dbContext) =>
+app.MapGet("/user/{id}/alarm", async ([FromRoute] string id, string read_yn, DbContextClass dbContext) =>
 {
     const string FORM_COMMON_CD = "ELECTRO_SIGN_GB";
-    var alarms = await dbContext.SYS_ALARMs.Where(p => p.PLANT_CD == plant_cd
-    && p.RECEIVE_EMP_CD == user_Id).ToListAsync();
+    var alarms = await dbContext.SYS_ALARMs.Where(p => p.PLANT_CD == PLANT_CD
+    && p.RECEIVE_EMP_CD == id
+    && p.READ_YN == read_yn
+    ).ToListAsync();
     if (alarms == null || alarms.Count == 0)
     {
         var message = new ResponseDTO() { IsSuccess = false, Message = Response.NOT_FOUND };
         return Results.NotFound(message);
     }
 
-    var commons = await dbContext.CM_COMMONs.Where(p => p.PLANT_CD == plant_cd
+    var commons = await dbContext.CM_COMMONs.Where(p => p.PLANT_CD == PLANT_CD
     && p.COMMON_CD == FORM_COMMON_CD).ToListAsync();
 
     //alarms.ForEach(p => {
@@ -132,58 +144,48 @@ app.MapGet("/getalarmbyuserid", async (string plant_cd, string user_Id, DbContex
     return Results.Ok(results);
 });
 
-//update the alarm by alarm_id
-app.MapPut("/updatealarm_id", async (AlarmDTO alarmDTO, DbContextClass dbContext) =>
+app.MapPut("/user/{id}/update", async ([FromRoute] string id, UserTokenDTO userToken, DbContextClass dbContext) =>
 {
-   var alarmDetail = await dbContext.SYS_ALARMs.FindAsync(alarmDTO.PLANT_CD, alarmDTO.ALARM_ID);
-    if (alarmDetail == null)
+    var user = await dbContext.SYS_USER_INFOs.FindAsync(PLANT_CD, id);
+    if (user == null)
     {
-        var message = new ResponseDTO() { IsSuccess = false, Message = Response.NOT_FOUND };
-        return Results.NotFound(message);
+        return Results.NotFound();
     }
-
-    if (alarmDTO.ALARM_CONTENT is not null)
-        alarmDetail.ALARM_CONTENT = alarmDTO.ALARM_CONTENT;
-
-    alarmDetail.READ_YN = alarmDTO.READ_YN;
-
-    if (alarmDTO.READ_YN == "Y")
-        alarmDetail.READ_TIME = DateTime.Now;
-
-    var result = mapper.Map<SYS_ALARM, AlarmDTO>(alarmDetail);
+    user.DEVICE_TOKEN = userToken.DEVICE_TOKEN;
 
     await dbContext.SaveChangesAsync();
+
+    var result = mapper.Map<SYS_USER_INFO, UserDTO>(user);
+
     return Results.Ok(result);
 });
 
 // Post Notification
-app.MapPost("/notification/send", async (NotificationDTO notificationDTO, DbContextClass dbContext) =>
+app.MapPost("/user/{id}/send", async ([FromRoute] string id, NotificationUserDTO notificationUserDTO, DbContextClass dbContext) =>
 {
-    // DeviceId에 토큰을 실어서 테스트함.
-    var token = notificationDTO.DeviceId;
+    var user_id = id;
+    var user = await dbContext.SYS_USER_INFOs.FindAsync(PLANT_CD, user_id);
+    if (user == null)
+    {
+        var resturnMessage = new ResponseDTO() { IsSuccess = false, Message = Response.NOT_FOUND };
+        return Results.NotFound(resturnMessage);
+    }
+
+    if (string.IsNullOrEmpty(user.DEVICE_TOKEN))
+    {
+        var resturnMessage = new ResponseDTO() { IsSuccess = false, Message = Response.NOT_FOUND_TOKEN };
+        return Results.NotFound(resturnMessage);
+    }
+
+    var token = user.DEVICE_TOKEN;
     // Client의 토큰
     var messaging = FirebaseMessaging.DefaultInstance;
-    var message = new Message() { 
+    var message = new Message()
+    {
         Token = token,
-        //Topic = topic,
-        Data = notificationDTO.Data,
-        //Notification = new Notification
-        //{
-        //    Title = notificationDTO.Title,
-        //    Body = notificationDTO.Body
-        //},
-        //Android = new AndroidConfig()
-        //{
-        //    TimeToLive = TimeSpan.FromHours(1),
-        //    Notification = new AndroidNotification()
-        //    {
-        //        ClickAction = "TOP_STORY_ACTIVITY",
-        //        Icon = "stock_ticker_update",
-        //        Color = "#f45342",
-        //    },
-        //},
+        Data = notificationUserDTO.Data,
     };
-    
+
     var result = await messaging.SendAsync(message);
 
     if (result == null)
@@ -194,65 +196,56 @@ app.MapPost("/notification/send", async (NotificationDTO notificationDTO, DbCont
     return Results.Ok(result);
 });
 
-
-
-// Example
-//get the list of parameter
-app.MapGet("/parameterlist", async (DbContextClass dbContext) =>
+//update the alarm by alarm_id
+app.MapPut("/alarm/{id}/update", async ([FromRoute] long id, AlarmUpdateDTO alarmDTO, DbContextClass dbContext) =>
 {
-    var parameter = await dbContext.SYS_PARAMETERs.ToListAsync();
-    if (parameter == null)
+   var alarmDetail = await dbContext.SYS_ALARMs.FindAsync(PLANT_CD, id);
+    if (alarmDetail == null)
+    {
+        var message = new ResponseDTO() { IsSuccess = false, Message = Response.NOT_FOUND };
+        return Results.NotFound(message);
+    }
+
+    if (alarmDTO == null || alarmDTO.READ_YN.Length == 0)
+    {
+        var message = new ResponseDTO() { IsSuccess = false, Message = Response.NOT_FOUND_UPDATE };
+        return Results.NotFound(message);
+    }
+
+    alarmDetail.READ_YN = alarmDTO.READ_YN.ToUpper();
+
+    if (alarmDetail.READ_YN == "Y")
+        alarmDetail.READ_TIME = DateTime.Now;
+
+    var result = mapper.Map<SYS_ALARM, AlarmDTO>(alarmDetail);
+
+    await dbContext.SaveChangesAsync();
+    return Results.Ok(result);
+});
+
+
+
+
+// Post Notification
+app.MapPost("/notification/device/{token}/send", async ([FromRoute] string token, NotificationDTO notificationDTO, DbContextClass dbContext) =>
+{
+    // DeviceId에 토큰을 실어서 테스트함.
+    //var token = notificationDTO.DeviceId;
+    // Client의 토큰
+    var messaging = FirebaseMessaging.DefaultInstance;
+    var message = new Message() { 
+        Token = token,
+        Data = notificationDTO.Data,
+    };
+    
+    var result = await messaging.SendAsync(message);
+
+    if (result == null)
     {
         return Results.NoContent();
     }
-    return Results.Ok(parameter);
-});
 
-//get parameter by id
-app.MapGet("/getparameterbyid", async (int id, DbContextClass dbContext) =>
-{
-    var parameter = await dbContext.SYS_PARAMETERs.FindAsync(id);
-    if (parameter == null)
-    {
-        return Results.NotFound();
-    }
-    return Results.Ok(parameter);
-});
-
-//create a new parameter
-app.MapPost("/createparameter", async (SYS_PARAMETER parameter, DbContextClass dbContext) =>
-{
-    var result = dbContext.SYS_PARAMETERs.Add(parameter);
-    await dbContext.SaveChangesAsync();
-    return Results.Ok(result.Entity);
-});
-
-//update the parameter
-app.MapPut("/updateparameter", async (SYS_PARAMETER parameter, DbContextClass dbContext) =>
-{
-    var parameterDetail = await dbContext.SYS_PARAMETERs.FindAsync(parameter.PARAMETER_CD);
-    if (parameter == null)
-    {
-        return Results.NotFound();
-    }
-    parameterDetail.PARAMETER_VALUE = parameter.PARAMETER_CD;
-    parameterDetail.PARAMETER_REMARK = parameter.PARAMETER_REMARK;
-
-    await dbContext.SaveChangesAsync();
-    return Results.Ok(parameterDetail);
-});
-
-//delete the parameter by id
-app.MapDelete("/deleteparameter/{id}", async (int id, DbContextClass dbContext) =>
-{
-    var parameter = await dbContext.SYS_PARAMETERs.FindAsync(id);
-    if (parameter == null)
-    {
-        return Results.NoContent();
-    }
-    dbContext.SYS_PARAMETERs.Remove(parameter);
-    await dbContext.SaveChangesAsync();
-    return Results.Ok();
+    return Results.Ok(result);
 });
 
 app.Run();
